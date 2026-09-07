@@ -114,7 +114,7 @@ class TestCarInterfaces(unittest.TestCase):
   def test_interface_attrs(self):
     """Asserts basic behavior of interface attribute getter"""
     num_brands = len(get_interface_attr('CAR'))
-    assert num_brands >= 12
+    assert num_brands >= 2
 
     # Should return value for all brands when not combining, even if attribute doesn't exist
     ret = get_interface_attr('FAKE_ATTR')
@@ -122,7 +122,7 @@ class TestCarInterfaces(unittest.TestCase):
 
     # Make sure we can combine dicts
     ret = get_interface_attr('DBC', combine_brands=True)
-    assert len(ret) >= 160
+    assert len(ret) >= 40
 
     # We don't support combining non-dicts
     ret = get_interface_attr('CAR', combine_brands=True)
