@@ -1,8 +1,10 @@
 import unittest
 
-from opendbc.car import Bus, gen_empty_fingerprint
+from opendbc.can import CANPacker
+from opendbc.car import Bus, gen_empty_fingerprint, structs
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
+from opendbc.car.toyota.carstate import CarState
 from opendbc.car.toyota.fingerprints import FW_VERSIONS
 from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, \
                                                   FUZZY_EXCLUDED_PLATFORMS, get_platform_codes
@@ -10,6 +12,7 @@ from opendbc.car.toyota.interface import CarInterface
 from opendbc.testing import fuzzy_test
 
 Ecu = CarParams.Ecu
+ButtonType = structs.CarState.ButtonEvent.Type
 
 
 def check_fw_version(fw_version: bytes) -> bool:
@@ -176,3 +179,66 @@ class TestToyotaFingerprint(unittest.TestCase):
         platforms_with_shared_codes |= {str(platform), *matches}
 
     assert platforms_with_shared_codes == FUZZY_EXCLUDED_PLATFORMS, (len(platforms_with_shared_codes), len(FW_VERSIONS))
+
+
+class TestToyotaCarState(unittest.TestCase):
+  """CarState CAN parsing tests: construct a CarState, feed fake frames, check outputs."""
+
+  def _get_car_state(self, car_model):
+    CP = CarInterface.get_params(car_model, gen_empty_fingerprint(), list(), alpha_long=False, is_release=False, docs=False)
+    CP_SP = CarInterface.get_params_sp(CP, car_model, gen_empty_fingerprint(), list(), alpha_long=False, is_release_sp=False, docs=False)
+    CS = CarState(CP, CP_SP)
+    can_parsers = CarState.get_can_parsers(CP, CP_SP)
+    packer = CANPacker(DBC[car_model][Bus.pt])
+    return CS, can_parsers, packer
+
+  def _update(self, CS, can_parsers, packer, pcm_cruise_4=None):
+    frames = []
+    if pcm_cruise_4 is not None:
+      frames.append(packer.make_can_msg("PCM_CRUISE_4", 0, pcm_cruise_4))
+    can_parsers[Bus.pt].update([0, frames])
+    return CS.update(can_parsers)
+
+  def test_cruise_button_echo_edges(self):
+    """PCM_CRUISE_4 cruise button echo produces press and release edges as buttonEvents.
+
+    The simulator and the user close the same physical circuit, so the echo itself
+    cannot distinguish user presses from ours -- attribution is cruisebuttond's job;
+    this only guarantees events are reported faithfully, like every other brand.
+    """
+    for car_model in (CAR.TOYOTA_SIENNA_PATCHED, CAR.TOYOTA_SIENNA_4TH_GEN):
+      with self.subTest(car_model=car_model.value):
+        CS, can_parsers, packer = self._get_car_state(car_model)
+        # warm-up cycle: the lazy parser registers PCM_CRUISE_4 on first access,
+        # like the first production update cycle does
+        self._update(CS, can_parsers, packer)
+
+        for sig, btn_type in (("INCREASE", ButtonType.accelCruise), ("DECREASE", ButtonType.decelCruise),
+                              ("ENABLE", ButtonType.setCruise), ("CANCEL", ButtonType.cancel)):
+          with self.subTest(signal=sig, car_model=car_model.value):
+            # press
+            ret, _ = self._update(CS, can_parsers, packer, {sig: 1})
+            events = list(ret.buttonEvents)
+            assert len(events) == 1, events
+            assert events[0].type == btn_type
+            assert events[0].pressed
+
+            # held: no repeat event
+            ret, _ = self._update(CS, can_parsers, packer, {sig: 1})
+            assert len(list(ret.buttonEvents)) == 0
+
+            # release
+            ret, _ = self._update(CS, can_parsers, packer, {sig: 0})
+            events = list(ret.buttonEvents)
+            assert len(events) == 1, events
+            assert events[0].type == btn_type
+            assert not events[0].pressed
+
+  def test_cruise_button_echo_non_secoc(self):
+    # Non-SECOC platforms have no PCM_CRUISE_4 in their DBC and must not emit cruise button events
+    CS, can_parsers, _ = self._get_car_state(CAR.TOYOTA_SIENNA)
+    # raw PCM_CRUISE_4 frame with INCREASE|ENABLE|DECREASE|CANCEL set; not registered on this platform
+    frame = (589, bytes([0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), 0)
+    can_parsers[Bus.pt].update([0, [frame]])
+    ret, _ = CS.update(can_parsers)
+    assert len(list(ret.buttonEvents)) == 0

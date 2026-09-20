@@ -24,6 +24,19 @@ TEMP_STEER_FAULTS = (0, 9, 11, 21, 25)
 # - prolonged high driver torque: 17 (permanent)
 PERM_STEER_FAULTS = (3, 17)
 
+# Cruise switch echo, PCM_CRUISE_4 (same PT bus as PCM_CRUISE_2; the lazy
+# parser adds it on first access). The steering-wheel cruise buttons close a
+# resistive ladder -> steering ECU -> CXPI -> meter -> CAN; the external
+# simulator closes the SAME circuit, so the echo cannot distinguish user
+# presses from ours -- cruisebuttond attributes by pairing these events with
+# its own command ledger. Both edges are reported, like every other brand.
+CRUISE_BUTTON_MAP = {
+  "INCREASE": ButtonType.accelCruise,
+  "DECREASE": ButtonType.decelCruise,
+  "ENABLE": ButtonType.setCruise,
+  "CANCEL": ButtonType.cancel,
+}
+
 
 class CarState(CarStateBase, CarStateExt):
   def __init__(self, CP, CP_SP):
@@ -47,6 +60,7 @@ class CarState(CarStateBase, CarStateExt):
 
     self.lkas_button = 0
     self.distance_button = 0
+    self.cruise_button_prev = {s: False for s in CRUISE_BUTTON_MAP}
 
     self.pcm_follow_distance = 0
 
@@ -209,6 +223,13 @@ class CarState(CarStateBase, CarStateExt):
       self.distance_button = cp.vl["SDSU"]["FD_BUTTON"]
 
       buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
+
+    if self.CP.flags & (ToyotaFlags.SECOC | ToyotaFlags.EPS_BYPASS_SECOC):
+      for sig, btn_type in CRUISE_BUTTON_MAP.items():
+        pressed = bool(cp.vl["PCM_CRUISE_4"][sig])
+        if pressed != self.cruise_button_prev[sig]:
+          buttonEvents.append(structs.CarState.ButtonEvent(pressed=pressed, type=btn_type))
+          self.cruise_button_prev[sig] = pressed
 
     ret.buttonEvents = buttonEvents
 
