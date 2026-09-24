@@ -2,7 +2,7 @@ import math
 import numpy as np
 from opendbc.car import Bus, make_tester_present_msg, rate_limit, structs, ACCELERATION_DUE_TO_GRAVITY, DT_CTRL
 from opendbc.car.lateral import apply_meas_steer_torque_limits, apply_std_steer_angle_limits, common_fault_avoidance
-from opendbc.car.carlog import carlog
+from opendbc.car.carlog import error_once
 from opendbc.car.common.filter_simple import FirstOrderFilter, HighPassFilter
 from opendbc.car.common.pid import PIDController
 from opendbc.car.secoc import add_mac, build_sync_mac
@@ -105,7 +105,9 @@ class CarController(CarControllerBase, GasInterceptorCarController):
 
         expected_mac = build_sync_mac(self.secoc_key, int(CS.secoc_synchronization['TRIP_CNT']), int(CS.secoc_synchronization['RESET_CNT']))
         if int(CS.secoc_synchronization['AUTHENTICATOR']) != expected_mac:
-          carlog.error("SecOC synchronization MAC mismatch, wrong key?")
+          # EPS bypass(假 MAC 收横向)+ 原车纵向的形态下每次同步跳变都失配,
+          # 是已知无害的持续告警 —— 进程内只报一次,不刷屏。
+          error_once("secoc_sync_mac", "SecOC synchronization MAC mismatch, wrong key?")
 
     # *** steer torque ***
     new_torque = int(round(actuators.torque * self.params.STEER_MAX))
