@@ -9,7 +9,7 @@ from collections.abc import Callable
 
 from opendbc.car import structs
 from opendbc.car.can_definitions import CanRecvCallable, CanSendCallable
-from opendbc.car.toyota.values import ToyotaSafetyFlags
+from opendbc.car.toyota.values import ToyotaFlags, ToyotaSafetyFlags
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
 
@@ -50,6 +50,7 @@ def _initialize_toyota(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params
   if CP.brand == 'toyota':
     toyota_stock_long = int(params_dict.get("ToyotaEnforceStockLongitudinal", 0)) == 1
     toyota_stop_and_go_hack = int(params_dict.get("ToyotaStopAndGoHack", 0)) == 1
+    toyota_tss2_smooth = int(params_dict.get("ToyotaTSS2Smooth", 0)) == 1
 
     if toyota_stock_long:
       CP_SP.flags |= ToyotaFlagsSP.STOCK_LONGITUDINAL.value
@@ -59,3 +60,6 @@ def _initialize_toyota(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params
 
     if toyota_stop_and_go_hack and CP.openpilotLongitudinalControl:
       CP_SP.flags |= ToyotaFlagsSP.STOP_AND_GO_HACK.value
+
+    if toyota_tss2_smooth and CP.flags & ToyotaFlags.TSS2 and CP.openpilotLongitudinalControl:
+      CP_SP.flags |= ToyotaFlagsSP.TSS2_SMOOTH.value
