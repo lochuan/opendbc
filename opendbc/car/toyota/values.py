@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum, IntFlag
 
 from opendbc.car import Bus, CarSpecs, PlatformConfig, Platforms
-from opendbc.car.lateral import AngleSteeringLimits
+from opendbc.car.lateral import AngleSteeringLimits, AngleSteeringLimitsVM
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.structs import CarParams
 from opendbc.car.docs_definitions import CarFootnote, CarDocs, Column, CarParts, CarHarness, SupportType
@@ -21,7 +21,7 @@ class CarControllerParams:
   STEER_ERROR_MAX = 350     # max delta between torque cmd and torque motor
 
   # Lane Tracing Assist (LTA) control limits
-  ANGLE_LIMITS: AngleSteeringLimits = AngleSteeringLimits(
+  ANGLE_LIMITS: AngleSteeringLimits | AngleSteeringLimitsVM = AngleSteeringLimits(
     # EPS ignores commands above this angle and causes PCS to fault
     94.9461,  # deg
     # Assuming a steering ratio of 13.7:
@@ -34,8 +34,15 @@ class CarControllerParams:
   )
 
   MAX_LTA_DRIVER_TORQUE_ALLOWANCE = 150  # slightly above steering pressed allows some resistance when changing lanes
+  LTA_MAX_MEAS_TORQUE = 1500
 
   def __init__(self, CP):
+    if CP.carFingerprint == CAR.TOYOTA_SIENNA_PATCHED_LTA:
+      self.LTA_MAX_MEAS_TORQUE = 3200
+      # Tesla-style vehicle-model limiting for isolated HIL, with the EPS high-mode angle ceiling.
+      self.STEER_STEP = 2
+      self.ANGLE_LIMITS = AngleSteeringLimitsVM(180.0366, MAX_ANGLE_RATE=5)
+
     if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT:
       self.ACCEL_MAX = 2.0
     else:
@@ -328,6 +335,11 @@ class CAR(Platforms):
     [ToyotaSiennaPatchedCarDocs("Toyota Sienna 2021-26 PATCHED", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=4625. * CV.LB_TO_KG, wheelbase=3.06, steerRatio=17.8, tireStiffnessFactor=0.444),
     flags=ToyotaFlags.EPS_BYPASS_SECOC,
+  )
+  TOYOTA_SIENNA_PATCHED_LTA = ToyotaSecOCPlatformConfig(
+    [ToyotaSiennaPatchedCarDocs("Toyota Sienna 2021-26 PATCHED LTA", min_enable_speed=MIN_ACC_SPEED)],
+    CarSpecs(mass=4625. * CV.LB_TO_KG, wheelbase=3.06, steerRatio=17.8, tireStiffnessFactor=0.444),
+    flags=ToyotaFlags.EPS_BYPASS_SECOC | ToyotaFlags.ANGLE_CONTROL,
   )
 
   # Lexus

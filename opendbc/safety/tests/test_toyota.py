@@ -6,6 +6,12 @@ import unittest
 import itertools
 
 from opendbc.car.toyota.values import ToyotaSafetyFlags
+from opendbc.car import gen_empty_fingerprint, structs
+from opendbc.car.toyota.interface import CarInterface
+from opendbc.car.toyota.values import CAR
+from opendbc.car.vehicle_model import VehicleModel
+from opendbc.car.lateral import get_max_angle_vm
+from opendbc.car.toyota.values import CarControllerParams
 from opendbc.sunnypilot.car.toyota.values import ToyotaSafetyFlagsSP
 from opendbc.car.structs import CarParams
 from opendbc.safety.tests.libsafety import libsafety_py
@@ -62,6 +68,10 @@ class TestToyotaSafetyBase(common.CarSafetyTest, common.LongitudinalAccelSafetyT
   def _lta_msg(self, req, req2, angle_cmd, torque_wind_down=100):
     values = {"STEER_REQUEST": req, "STEER_REQUEST_2": req2, "STEER_ANGLE_CMD": angle_cmd, "TORQUE_WIND_DOWN": torque_wind_down}
     return self.packer.make_can_msg_safety("STEERING_LTA", 0, values)
+
+  def _lta_2_msg(self, req, req2, angle_cmd):
+    values = {"STEER_REQUEST": req, "STEER_REQUEST_2": req2, "STEER_ANGLE_CMD": angle_cmd}
+    return self.packer.make_can_msg_safety("STEERING_LTA_2", 0, values)
 
   def _accel_msg_343(self, accel, cancel_req=0):
     values = {"ACCEL_CMD": accel, "CANCEL_REQ": cancel_req}
@@ -452,10 +462,6 @@ class TestToyotaSecOcSafetyBase(TestToyotaSafetyBase):
   # This platform sends both STEERING_LTA (same as other Toyota) and STEERING_LTA_2 (SecOC signed)
   # STEERING_LTA is checked for no-actuation by the base class, STEERING_LTA_2 is checked for no-actuation below
 
-  def _lta_2_msg(self, req, req2, angle_cmd, torque_wind_down=100):
-    values = {"STEER_REQUEST": req, "STEER_REQUEST_2": req2, "STEER_ANGLE_CMD": angle_cmd}
-    return self.packer.make_can_msg_safety("STEERING_LTA_2", 0, values)
-
   def test_lta_2_steer_cmd(self):
     for engaged, req, req2, angle in itertools.product([True, False], [0, 1], [0, 1], np.linspace(-20, 20, 5)):
       self.safety.set_controls_allowed(engaged)
@@ -469,6 +475,130 @@ class TestToyotaSecOcSafetyBase(TestToyotaSafetyBase):
 
   def _accel_msg(self, accel, cancel_req=0):
     return self._accel_msg_183(accel)
+
+
+class TestToyotaSecOcSafetyAngle(TestToyotaStockLongitudinalBase, TestToyotaSafetyAngle):
+
+  TX_MSGS = TOYOTA_SECOC_TX_MSGS
+  RELAY_MALFUNCTION_ADDRS = {0: (0x2E4, 0x191, 0x412, 0x131)}
+  FWD_BLACKLISTED_ADDRS = {2: [0x2E4, 0x191, 0x412, 0x131]}
+  MAX_MEAS_TORQUE = 3200
+  LATERAL_FREQUENCY = 50
+  cnt_angle_cmd = 0
+
+  def setUp(self):
+    self.packer = CANPackerSafety("toyota_secoc_pt_generated")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.toyota,
+                                 self.EPS_SCALE | ToyotaSafetyFlags.STOCK_LONGITUDINAL |
+                                 ToyotaSafetyFlags.SECOC | ToyotaSafetyFlags.LTA)
+    self.safety.init_tests()
+    CP = CarInterface.get_params(CAR.TOYOTA_SIENNA_PATCHED_LTA, gen_empty_fingerprint(), [],
+                                 alpha_long=False, is_release=False, docs=False)
+    self.VM = VehicleModel(CP)
+    self.controller_params = CarControllerParams(CP)
+
+  def _angle_cmd_msg(self, angle: float, enabled: bool, increment_timer: bool = True):
+    if increment_timer:
+      self.safety.set_timer(self.cnt_angle_cmd * int(1e6 / self.LATERAL_FREQUENCY))
+      self.__class__.cnt_angle_cmd += 1
+    return self._lta_2_msg(int(enabled), int(enabled), angle)
+
+  def _get_steer_cmd_angle_max(self, speed):
+    return get_max_angle_vm(max(speed, 1), self.VM, self.controller_params) + 10.0
+
+  def _user_gas_msg(self, gas):
+    values = {"GAS_PEDAL_USER": gas}
+    return self.packer.make_can_msg_safety("GAS_PEDAL", 0, values)
+
+  def test_angle_violation(self):
+    # Below 5 m/s the VM envelope exceeds the encodable angle range, so no valid violation frame exists.
+    self.safety.set_controls_allowed(True)
+    for speed in (5., 10., 15., 50.):
+      self._tx(self._angle_cmd_msg(0, True))
+      self._reset_speed_measurement(speed)
+      for _ in range(20):
+        self.assertFalse(self._tx(self._angle_cmd_msg(self._get_steer_cmd_angle_max(speed), True)))
+      self.assertTrue(self._tx(self._angle_cmd_msg(0, True)))
+
+  def test_angle_cmd_when_enabled(self):
+    # Each allowed step exceeds the previous fixed table but fits the Sienna VM envelope.
+    for speed, previous, allowed, excessive in ((5, 0, 2, 100), (10, 0, 2, 100), (15, 0, 1, 70), (25, 0, 0.5, 40)):
+      with self.subTest(speed=speed):
+        self._reset_angle_measurement(previous)
+        self._reset_speed_measurement(speed)
+        self._set_prev_desired_angle(previous)
+        self.safety.set_controls_allowed(True)
+        self.assertTrue(self._tx(self._angle_cmd_msg(previous + allowed, True)))
+        self.safety.set_controls_allowed(True)
+        self._set_prev_desired_angle(previous)
+        self.assertFalse(self._tx(self._angle_cmd_msg(excessive, True)))
+
+  def test_controller_driver_override_and_release(self):
+    CP = CarInterface.get_params(CAR.TOYOTA_SIENNA_PATCHED_LTA, gen_empty_fingerprint(), [],
+                                 alpha_long=False, is_release=False, docs=False)
+    interface = CarInterface(CP, structs.CarParamsSP())
+    interface.update([])
+    control = structs.CarControl(enabled=True, latActive=True)
+    control.actuators.steeringAngleDeg = 115.25
+    self.assertEqual(CP.safetyConfigs[0].safetyParam, 3657)
+    self.safety.set_controls_allowed(True)
+    self._set_prev_desired_angle(0)
+    for frame in range(240):
+      self.safety.set_timer(frame * 10_000)
+      # Override on an odd frame, move beyond the existing angle cap, then release.
+      driver_torque = 212 if 11 <= frame < 60 else 80 if frame < 100 else 0
+      measured_angle = min(120, frame) if frame < 100 else 120 - min(80, frame - 100)
+      interface.CS.out.steeringTorque = driver_torque
+      interface.CS.out.steeringPressed = driver_torque > 100
+      interface.CS.out.steeringAngleDeg = measured_angle - 3
+      interface.CS.out.steeringAngleOffsetDeg = 3
+      interface.CS.out.steeringTorqueEps = 2000
+      interface.CS.out.vEgoRaw = 15
+      values = {"STEER_TORQUE_DRIVER": driver_torque, "STEER_TORQUE_EPS": 2000 / 0.73,
+                "STEER_ANGLE": measured_angle, "STEER_ANGLE_INITIALIZING": 0}
+      self.assertTrue(self._rx(self.packer.make_can_msg_safety("STEER_TORQUE_SENSOR", 0, values)))
+      self.assertTrue(self._rx(self._speed_msg(15)))
+      _, messages = interface.apply(control.as_reader(), structs.CarControlSP(), frame * 10_000_000)
+      for address, data, bus in messages:
+        if address in (0x131, 0x191, 0x2E4):
+          self.assertTrue(self._tx(libsafety_py.make_CANPacket(address, bus, data)), (frame, hex(address), data.hex()))
+
+  def test_lta_steer_cmd(self):
+    # 0x191 is coordination-only on SecOC LTA: angle must stay zero.
+    for controls_allowed in (True, False):
+      for req, req2, torque_wind_down in itertools.product([0, 1], [0, 1], [0, 50, 100]):
+        self.safety.set_controls_allowed(controls_allowed)
+        mismatch = not (req or req2) and torque_wind_down != 0
+        should_tx = req == req2 and torque_wind_down in (0, 100) and not mismatch
+        if not controls_allowed:
+          should_tx = not (req or req2) and torque_wind_down == 0
+        self.assertEqual(should_tx, self._tx(self._lta_msg(req, req2, 0, torque_wind_down)))
+
+      for req, req2 in ((0, 0), (1, 1)):
+        self.safety.set_controls_allowed(controls_allowed)
+        self.assertFalse(self._tx(self._lta_msg(req, req2, 1, 100 if req else 0)))
+
+    # The dedicated SecOC LTA platform winds down above 3200, not the normal 1500.
+    for eps_torque, driver_torque in ((1500, 150), (3200, 150), (3201, 150), (3200, 151)):
+      for sign in (-1, 1):
+        self.safety.set_controls_allowed(True)
+        self._reset_angle_measurement(0)
+        self._set_prev_desired_angle(0)
+        for _ in range(6):
+          self._rx(self._torque_meas_msg(sign * eps_torque, sign * driver_torque))
+
+        should_tx = (eps_torque - 1) <= self.MAX_MEAS_TORQUE and driver_torque <= self.MAX_LTA_DRIVER_TORQUE
+        self.assertEqual(should_tx, self._tx(self._lta_msg(1, 1, 0, 100)))
+        self.assertTrue(self._tx(self._lta_msg(1, 1, 0, 0)))
+
+  def test_lta_2_steer_cmd(self):
+    for engaged, req, req2 in itertools.product([True, False], [0, 1], [0, 1]):
+      self.safety.set_controls_allowed(engaged)
+      self._reset_angle_measurement(0)
+      self._set_prev_desired_angle(0)
+      should_tx = req == req2 and (engaged or not (req or req2))
+      self.assertEqual(should_tx, self._tx(self._lta_2_msg(req, req2, 0)))
 
 
 class TestToyotaSecOcSafetyStockLongitudinal(TestToyotaSecOcSafetyBase, TestToyotaStockLongitudinalBase):

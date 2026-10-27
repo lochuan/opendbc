@@ -8,8 +8,9 @@ from opendbc.car.values import Platform
 non_tested_cars = [
   MOCK.MOCK,
 
-  # no uploadable route for this PRC-market patched platform
+  # no uploadable route for these PRC-market patched platforms
   TOYOTA.TOYOTA_SIENNA_PATCHED,
+  TOYOTA.TOYOTA_SIENNA_PATCHED_LTA,
 ]
 
 
