@@ -1,5 +1,6 @@
 Unreleased
 ==========
+* Route the two Sienna Patched LTA DBC names through authenticated AES-256-GCM packages with strict manifests and device-wrapped release keys. Keep shared Toyota DBC loading unchanged; test-only adapters are explicit.
 * Add the manually selected `TOYOTA_SIENNA_PATCHED_LTA` platform for isolated EPS HIL research, including SecOC angle commands, Panda safety checks, and LTA-specific steering-rate fault avoidance. Keep `TOYOTA_SIENNA_PATCHED` on its existing torque-control path.
 * Revoke `TOYOTA_SIENNA_PATCHED_LTA` requests during driver override, follow the measured angle while inactive, and require a one-second low-torque release dwell.
 * Replace `TOYOTA_SIENNA_PATCHED_LTA` angle limiting with a Tesla-style Sienna vehicle-model controller for isolated HIL evaluation: a 250 deg/s rate cap, a 180.0366-degree high-mode angle cap, `0x131.B0[1]` high-output requests, and matching VM safety checks. Retain the 3200 measured-torque threshold and other platforms' behavior.

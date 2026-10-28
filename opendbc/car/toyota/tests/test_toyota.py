@@ -5,6 +5,9 @@ import json
 import unittest
 from pathlib import Path
 
+import pytest
+from opendbc.car.tests.dbc_adapter import sienna_dbc_adapter  # noqa: F401
+
 from opendbc.can import CANParser
 from opendbc.car import Bus, gen_empty_fingerprint, structs
 from opendbc.car.structs import CarParams
@@ -16,6 +19,7 @@ from opendbc.car.toyota.interface import CarInterface
 from opendbc.testing import fuzzy_test
 
 Ecu = CarParams.Ecu
+pytestmark = pytest.mark.usefixtures('sienna_dbc_adapter')
 
 
 def check_fw_version(fw_version: bytes) -> bool:

@@ -339,6 +339,7 @@ class CAR(Platforms):
   TOYOTA_SIENNA_PATCHED_LTA = ToyotaSecOCPlatformConfig(
     [ToyotaSiennaPatchedCarDocs("Toyota Sienna 2021-26 PATCHED LTA", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=4625. * CV.LB_TO_KG, wheelbase=3.06, steerRatio=17.8, tireStiffnessFactor=0.444),
+    dbc_dict('toyota_sienna_patched_lta_pt', 'toyota_sienna_patched_lta_adas'),
     flags=ToyotaFlags.EPS_BYPASS_SECOC | ToyotaFlags.ANGLE_CONTROL,
   )
 

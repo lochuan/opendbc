@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from functools import cache
 
 from opendbc import DBC_PATH, get_generated_dbcs
+from opendbc.can import dbc_asset
 
 # TODO: these should just be passed in along with the DBC file
 from opendbc.car.toyota.toyotacan import toyota_checksum
@@ -64,10 +65,12 @@ VAL_RE = re.compile(r"^VAL_ (\w+) (\w+) (.*);")
 VAL_SPLIT_RE = re.compile(r'["]+')
 
 
-@cache
-class DBC:
+class _DBC:
   def __init__(self, name: str):
-    if os.path.exists(name):
+    protected_name = os.path.basename(name).removesuffix('.dbc')
+    if protected_name in dbc_asset.SOURCES:
+      self._parse_content(protected_name, dbc_asset.load_protected_dbc(protected_name))
+    elif os.path.exists(name):
       self._parse_file(name)
     else:
       dbc_path = os.path.join(DBC_PATH, name + ".dbc")
@@ -153,6 +156,14 @@ class DBC:
         self.vals.append(Val(sgname, val_addr, val_def))
     for addr, sigs in signals_temp.items():
       self.msgs[addr].sigs = sigs
+
+
+_ordinary_dbc = cache(_DBC)
+
+
+def DBC(name: str):
+  # Protected objects are deliberately not cached: every new caller must pass the persisted revocation gate.
+  return _DBC(name) if os.path.basename(name).removesuffix('.dbc') in dbc_asset.SOURCES else _ordinary_dbc(name)
 
 
 # ***** checksum functions *****

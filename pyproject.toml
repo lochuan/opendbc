@@ -14,6 +14,7 @@ dependencies = [
   "tqdm",
   "pycapnp",
   "pycryptodome",
+  "zstandard",
 ]
 
 [project.optional-dependencies]
@@ -23,7 +24,6 @@ testing = [
   "tree-sitter-c",
   "gcovr",
   "unittest-parallel",
-  "zstandard",
 
   # static analysis
   "ruff",
