@@ -41,7 +41,7 @@ class CarControllerParams:
       self.LTA_MAX_MEAS_TORQUE = 3200
       # Tesla-style vehicle-model limiting for isolated HIL, with the EPS high-mode angle ceiling.
       self.STEER_STEP = 2
-      self.ANGLE_LIMITS = AngleSteeringLimitsVM(180.0366, MAX_ANGLE_RATE=5)
+      self.ANGLE_LIMITS = AngleSteeringLimitsVM(180.0366, MAX_ANGLE_RATE=10)
 
     if CP.flags & ToyotaFlags.RAISED_ACCEL_LIMIT:
       self.ACCEL_MAX = 2.0

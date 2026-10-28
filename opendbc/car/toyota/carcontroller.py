@@ -39,6 +39,12 @@ SIENNA_PATCHED_LTA_MAX_STEER_RATE = 500  # deg/s
 SIENNA_PATCHED_LTA_MAX_STEER_RATE_FRAMES = 32  # 20% margin below the EPS counter
 SIENNA_PATCHED_LTA_RELEASE_TORQUE = 80  # below the steeringPressed threshold of 100
 SIENNA_PATCHED_LTA_RELEASE_FRAMES = int(1.0 / DT_CTRL)
+SIENNA_PATCHED_LTA_ANGLE_KP = 0.1
+SIENNA_PATCHED_LTA_ANGLE_KI = 0.05
+SIENNA_PATCHED_LTA_ANGLE_INTEGRAL_LIMIT = 10.0
+SIENNA_PATCHED_LTA_ANGLE_CORRECTION_LIMIT = 15.0
+SIENNA_PATCHED_LTA_ANGLE_INTEGRAL_ERROR_LIMIT = 10.0
+SIENNA_PATCHED_LTA_ANGLE_CORRECTION_ERROR_LIMIT = 50.0
 
 # EPS allows user torque above threshold for 50 frames before permanently faulting
 MAX_USER_TORQUE = 500
@@ -72,6 +78,7 @@ class CarController(CarControllerBase, GasInterceptorCarController):
     self.steer_rate_counter = 0
     self.lta_driver_override = False
     self.lta_release_counter = 0
+    self.lta_angle_integral = 0.0
     self.distance_button = 0
 
     # *** start long control state ***
@@ -166,7 +173,21 @@ class CarController(CarControllerBase, GasInterceptorCarController):
         angle_active = lta_active if patched_lta else CC.latActive
         measured_angle = CS.out.steeringAngleDeg + CS.out.steeringAngleOffsetDeg
         if patched_lta:
-          self.last_angle = apply_steer_angle_limits_vm(apply_angle, self.last_angle, CS.out.vEgoRaw,
+          # EPS high mode has low P and no I: use a bounded outer PI to remove persistent angle error.
+          error = actuators.steeringAngleDeg - CS.out.steeringAngleDeg
+          if angle_active and abs(error) <= SIENNA_PATCHED_LTA_ANGLE_CORRECTION_ERROR_LIMIT:
+            if abs(error) < SIENNA_PATCHED_LTA_ANGLE_INTEGRAL_ERROR_LIMIT:
+              self.lta_angle_integral = float(np.clip(
+                self.lta_angle_integral + error * SIENNA_PATCHED_LTA_ANGLE_KI * DT_CTRL * self.params.STEER_STEP,
+                -SIENNA_PATCHED_LTA_ANGLE_INTEGRAL_LIMIT, SIENNA_PATCHED_LTA_ANGLE_INTEGRAL_LIMIT))
+            else:
+              self.lta_angle_integral = 0.0
+            correction = float(np.clip(SIENNA_PATCHED_LTA_ANGLE_KP * error + self.lta_angle_integral,
+                                       -SIENNA_PATCHED_LTA_ANGLE_CORRECTION_LIMIT, SIENNA_PATCHED_LTA_ANGLE_CORRECTION_LIMIT))
+          else:
+            self.lta_angle_integral = 0.0
+            correction = 0.0
+          self.last_angle = apply_steer_angle_limits_vm(apply_angle + correction, self.last_angle, CS.out.vEgoRaw,
                                                         measured_angle, angle_active, self.params, self.VM)
         else:
           self.last_angle = apply_std_steer_angle_limits(apply_angle, self.last_angle, CS.out.vEgoRaw,

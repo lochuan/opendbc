@@ -79,7 +79,39 @@ def lta_angle_command_after(initial_angle, desired_angle, speed, frames, activat
   return (angle, first_byte) if return_first_byte else angle
 
 
+def lta_angle_command_with_feedback(desired_angle, feedback_angle, frames, override_frame=None):
+  CP = CarInterface.get_params(CAR.TOYOTA_SIENNA_PATCHED_LTA, gen_empty_fingerprint(), [],
+                               alpha_long=False, is_release=False, docs=False)
+  interface = CarInterface(CP, structs.CarParamsSP())
+  interface.update([])
+  control = structs.CarControl(enabled=True, latActive=False)
+  control.actuators.steeringAngleDeg = desired_angle
+  state = interface.CS.out
+  state.vEgo = state.vEgoRaw = 3.86
+  state.steeringAngleDeg = feedback_angle
+  state.steeringTorque = 0
+  state.steeringPressed = False
+  parser = CANParser(DBC[CP.carFingerprint][Bus.pt], [("STEERING_LTA_2", 50)], 0)
+  for frame in range(frames):
+    if frame == 1:
+      control.latActive = True
+    if frame == override_frame:
+      state.steeringPressed = True
+    _, messages = interface.apply(control.as_reader(), structs.CarControlSP(), frame * 10_000_000)
+    parser.update([(frame * 10_000_000, messages)])
+  return parser.vl["STEERING_LTA_2"]["STEER_ANGLE_CMD"]
+
+
 class TestToyotaSiennaLtaAngleCommand(unittest.TestCase):
+  def test_outer_loop_corrects_small_angle_error(self):
+    self.assertAlmostEqual(lta_angle_command_with_feedback(5, 0, 5), 5.505, delta=0.0573)
+
+  def test_outer_loop_large_error_does_not_add_correction(self):
+    self.assertAlmostEqual(lta_angle_command_with_feedback(100, 0, 5), 20, delta=0.0573)
+
+  def test_outer_loop_resets_integral_on_driver_override(self):
+    self.assertAlmostEqual(lta_angle_command_with_feedback(5, 0, 6, override_frame=3), 0, delta=0.0573)
+
   def test_vm_large_angle_command_tracks_up_at_low_speed(self):
     self.assertAlmostEqual(lta_angle_command_after(27.27, 91.42, 3.86, 101), 91.42, delta=0.0573)
 
