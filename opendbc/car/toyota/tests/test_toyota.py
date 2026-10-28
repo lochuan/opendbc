@@ -121,9 +121,11 @@ class TestToyotaLtaDriverOverride(unittest.TestCase):
     return messages
 
   def assert_lta(self, active, angle=None):
-    for name in ("STEERING_LTA", "STEERING_LTA_2"):
-      self.assertEqual(self.parser.vl[name]["STEER_REQUEST"], active)
-      self.assertEqual(self.parser.vl[name]["STEER_REQUEST_2"], active)
+    # EPS arbitration must see only LTA2; simultaneous legacy + LTA2 rising selects no mode.
+    self.assertEqual(self.parser.vl["STEERING_LTA"]["STEER_REQUEST"], False)
+    self.assertEqual(self.parser.vl["STEERING_LTA"]["STEER_REQUEST_2"], False)
+    self.assertEqual(self.parser.vl["STEERING_LTA_2"]["STEER_REQUEST"], active)
+    self.assertEqual(self.parser.vl["STEERING_LTA_2"]["STEER_REQUEST_2"], active)
     self.assertEqual(self.parser.vl["STEERING_LTA"]["TORQUE_WIND_DOWN"], 100 if active else 0)
     self.assertEqual(self.parser.vl["STEERING_LTA"]["STEER_ANGLE_CMD"], 0)
     self.assertEqual(self.parser.vl["STEERING_LKA"]["STEER_REQUEST"], 0)

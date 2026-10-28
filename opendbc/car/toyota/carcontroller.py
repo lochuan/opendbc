@@ -198,8 +198,10 @@ class CarController(CarControllerBase, GasInterceptorCarController):
       # TORQUE_WIND_DOWN at 0 ramps down torque at roughly the max down rate of 1500 units/sec
       torque_wind_down = 100 if lta_active and full_torque_condition else 0
       lta_steer_angle = 0 if patched_lta else self.last_angle
+      # Simultaneous legacy + LTA2 rising selects no mode in the Sienna EPS arbitration.
+      legacy_request = lta_active and not patched_lta
       can_sends.append(toyotacan.create_lta_steer_command(self.packer, self.CP.steerControlType, lta_steer_angle,
-                                                          lta_active, self.frame // 2, torque_wind_down))
+                                                          legacy_request, self.frame // 2, torque_wind_down))
 
       if self.CP.flags & ToyotaFlags.SECOC.value:
         lta_steer_2 = toyotacan.create_lta_steer_command_2(self.packer, self.last_angle if patched_lta else 0,

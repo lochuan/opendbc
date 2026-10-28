@@ -574,8 +574,7 @@ class TestToyotaSecOcSafetyAngle(TestToyotaStockLongitudinalBase, TestToyotaSafe
     for controls_allowed in (True, False):
       for req, req2, torque_wind_down in itertools.product([0, 1], [0, 1], [0, 50, 100]):
         self.safety.set_controls_allowed(controls_allowed)
-        mismatch = not (req or req2) and torque_wind_down != 0
-        should_tx = req == req2 and torque_wind_down in (0, 100) and not mismatch
+        should_tx = req == req2 and torque_wind_down in (0, 100)
         if not controls_allowed:
           should_tx = not (req or req2) and torque_wind_down == 0
         self.assertEqual(should_tx, self._tx(self._lta_msg(req, req2, 0, torque_wind_down)))

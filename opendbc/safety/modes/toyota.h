@@ -348,8 +348,13 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
           tx = false;
         }
 
-        // TORQUE_WIND_DOWN is gated on steer request
-        if (!steer_control_enabled && (torque_wind_down != 0)) {
+        // SecOC carries the LTA2 request on 0x131, so 0x191 may be idle while wind-down is active.
+        if (toyota_secoc) {
+          if (!(controls_allowed || controls_allowed_lateral) && (steer_control_enabled || (torque_wind_down != 0))) {
+            tx = false;
+          }
+        }
+        if (!toyota_secoc && !steer_control_enabled && (torque_wind_down != 0)) {
           tx = false;
         }
 

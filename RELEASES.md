@@ -4,6 +4,7 @@ Unreleased
 * Add the manually selected `TOYOTA_SIENNA_PATCHED_LTA` platform for isolated EPS HIL research, including SecOC angle commands, Panda safety checks, and LTA-specific steering-rate fault avoidance. Keep `TOYOTA_SIENNA_PATCHED` on its existing torque-control path.
 * Revoke `TOYOTA_SIENNA_PATCHED_LTA` requests during driver override, follow the measured angle while inactive, and require a one-second low-torque release dwell.
 * Replace `TOYOTA_SIENNA_PATCHED_LTA` angle limiting with a Tesla-style Sienna vehicle-model controller for isolated HIL evaluation: a 250 deg/s rate cap, a 180.0366-degree high-mode angle cap, `0x131.B0[1]` high-output requests, and matching VM safety checks. Retain the 3200 measured-torque threshold and other platforms' behavior.
+* Fix Patched LTA activation arbitration: keep legacy `0x191` requests deasserted while `0x131` is active, avoiding simultaneous legacy/LTA2 rising-edge selection failure. Preserve `0x191` coordination and block nonzero wind-down whenever controls are disallowed.
 
 Version 0.3.1 (2026-04-22)
 ========================
