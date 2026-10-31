@@ -4,7 +4,6 @@ import os
 import argparse
 import unicodedata
 from string import Template
-from typing import get_args
 
 from enum import Enum
 
@@ -14,18 +13,12 @@ from opendbc.car.structs import CarParams, CarParamsSP
 from opendbc.car.docs_definitions import CarDocs, ExtraCarDocs, ExtraCarsColumn, CommonFootnote
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.interfaces import get_interface_attr
-from opendbc.car.values import Platform
+from opendbc.car.values import PLATFORMS
 from opendbc.car.mock.values import CAR as MOCK
-from opendbc.car.extra_cars import CAR as EXTRA
 
 
-EXTRA_CARS_MD_OUT = os.path.join(BASEDIR, "../", "../", "docs", "CARS.md")
-EXTRA_CARS_MD_TEMPLATE = os.path.join(BASEDIR, "CARS_template.md")
-
-# TODO: merge these platforms into normal car ports with SupportType flag
-ExtraPlatform = Platform | EXTRA
-EXTRA_BRANDS = get_args(ExtraPlatform)
-EXTRA_PLATFORMS: dict[str, ExtraPlatform] = {str(platform): platform for brand in EXTRA_BRANDS for platform in brand}
+CARS_MD_OUT = os.path.join(BASEDIR, "../", "../", "docs", "CARS.md")
+CARS_MD_TEMPLATE = os.path.join(BASEDIR, "CARS_template.md")
 
 
 def get_params_for_docs(platform) -> tuple[CarParams, CarParamsSP]:
@@ -77,7 +70,7 @@ def build_sorted_car_docs_list(platforms, footnotes=None):
 # CAUTION: This function is imported by shop.comma.ai and comma.ai/vehicles, test changes carefully
 def get_all_car_docs() -> list[CarDocs]:
   collected_footnotes = get_all_footnotes()
-  sorted_list: list[CarDocs] = build_sorted_car_docs_list(EXTRA_PLATFORMS, footnotes=collected_footnotes)
+  sorted_list: list[CarDocs] = build_sorted_car_docs_list(PLATFORMS, footnotes=collected_footnotes)
   return sorted_list
 
 
@@ -125,8 +118,8 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="Auto generates supportability info docs for all known cars",
                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-  parser.add_argument("--template", default=EXTRA_CARS_MD_TEMPLATE, help="Override default template filename")
-  parser.add_argument("--out", default=EXTRA_CARS_MD_OUT, help="Override default generated filename")
+  parser.add_argument("--template", default=CARS_MD_TEMPLATE, help="Override default template filename")
+  parser.add_argument("--out", default=CARS_MD_OUT, help="Override default generated filename")
   args = parser.parse_args()
 
   with open(args.out, 'w') as f:
