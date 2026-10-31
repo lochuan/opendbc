@@ -33,19 +33,11 @@ def create_lta_steer_command(packer, steer_control_type, steer_angle, steer_req,
   return packer.make_can_msg("STEERING_LTA", 0, values)
 
 
-def create_lta_steer_command_2(packer, steer_angle, steer_req, frame, high_output=False):
+def create_lta_steer_command_2(packer, frame):
   values = {
     "COUNTER": frame + 128,
-    "STEER_ANGLE_CMD": steer_angle,
-    "STEER_REQUEST": steer_req,
-    "STEER_REQUEST_2": steer_req,
   }
-  address, payload, bus = packer.make_can_msg("STEERING_LTA_2", 0, values)
-  if high_output and steer_req:
-    payload = bytearray(payload)
-    payload[0] |= 0x02  # B0[1] selects the EPS high-output mode.
-    payload = bytes(payload)
-  return address, payload, bus
+  return packer.make_can_msg("STEERING_LTA_2", 0, values)
 
 
 def create_accel_command(packer, accel, pcm_cancel, permit_braking, standstill_req, lead, acc_type, fcw_alert, distance):

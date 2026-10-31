@@ -50,8 +50,8 @@
   {.msg = {{0x1D2, 0, 8, 33U, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},                           \
   {.msg = {{0x224, 0, 8, 40U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
 
-#define TOYOTA_SECOC_RX_CHECKS(lta)                                                                                                        \
-  TOYOTA_COMMON_RX_CHECKS(lta)                                                                                                             \
+#define TOYOTA_SECOC_RX_CHECKS                                                                                                             \
+  TOYOTA_COMMON_RX_CHECKS(false)                                                                                                           \
   {.msg = {{0x176, 0, 8, 32U, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},                           \
   {.msg = {{0x116, 0, 8, 42U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
   {.msg = {{0x101, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
@@ -244,20 +244,7 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
     },
   };
 
-  static const AngleSteeringLimits TOYOTA_SECOC_LTA_ANGLE_STEERING_LIMITS = {
-    .max_angle = 3142,  // EPS high-output mode target-angle monitor threshold: 180.0366 deg
-    .angle_deg_to_can = 17.452007,
-    .frequency = 50U,
-  };
-
-  const AngleSteeringParams TOYOTA_SECOC_LTA_STEERING_PARAMS = {
-    .slip_factor = -0.0012345303453767,
-    .steer_ratio = 17.8,
-    .wheelbase = 3.06,
-  };
-
   const int TOYOTA_LTA_MAX_MEAS_TORQUE = 1500;
-  const int TOYOTA_SECOC_LTA_MAX_MEAS_TORQUE = 3200;
   const int TOYOTA_LTA_MAX_DRIVER_TORQUE = 150;
 
   // longitudinal limits
@@ -330,31 +317,17 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
           tx = false;
         }
       } else {
-        if (toyota_secoc) {
-          // SecOC LTA carries its angle on 0x131; 0x191 is coordination-only.
-          if (lta_angle != 0) {
-            tx = false;
-          }
-          if (!(controls_allowed || controls_allowed_lateral) && steer_control_enabled) {
-            tx = false;
-          }
-        } else {
-          if (steer_angle_cmd_checks(lta_angle, steer_control_enabled, TOYOTA_ANGLE_STEERING_LIMITS)) {
-            tx = false;
-          }
+        // check angle rate limits and inactive angle
+        if (steer_angle_cmd_checks(lta_angle, steer_control_enabled, TOYOTA_ANGLE_STEERING_LIMITS)) {
+          tx = false;
         }
 
         if (lta_request != lta_request2) {
           tx = false;
         }
 
-        // SecOC carries the LTA2 request on 0x131, so 0x191 may be idle while wind-down is active.
-        if (toyota_secoc) {
-          if (!(controls_allowed || controls_allowed_lateral) && (steer_control_enabled || (torque_wind_down != 0))) {
-            tx = false;
-          }
-        }
-        if (!toyota_secoc && !steer_control_enabled && (torque_wind_down != 0)) {
+        // TORQUE_WIND_DOWN is gated on steer request
+        if (!steer_control_enabled && (torque_wind_down != 0)) {
           tx = false;
         }
 
@@ -370,8 +343,7 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
         }
 
         int eps_torque = SAFETY_MIN(SAFETY_ABS(torque_meas.min), SAFETY_ABS(torque_meas.max));
-        const int max_meas_torque = toyota_secoc ? TOYOTA_SECOC_LTA_MAX_MEAS_TORQUE : TOYOTA_LTA_MAX_MEAS_TORQUE;
-        if ((eps_torque > max_meas_torque) && (torque_wind_down != 0)) {
+        if ((eps_torque > TOYOTA_LTA_MAX_MEAS_TORQUE) && (torque_wind_down != 0)) {
           tx = false;
         }
       }
@@ -379,26 +351,15 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
 
     // STEERING_LTA_2 angle steering check (SecOC)
     if (toyota_secoc && (msg->addr == 0x131U)) {
+      // SecOC cars block any form of LTA actuation for now
       bool lta_request = GET_BIT(msg, 3U);  // STEERING_LTA_2.STEER_REQUEST
       bool lta_request2 = GET_BIT(msg, 0U);  // STEERING_LTA_2.STEER_REQUEST_2
-      int lta_angle = (msg->data[2] << 8) | msg->data[3];  // STEERING_LTA_2.STEER_ANGLE_CMD
-      lta_angle = to_signed(lta_angle, 16);
+      int lta_angle_msb = msg->data[2];  // STEERING_LTA_2.STEER_ANGLE_CMD (MSB)
+      int lta_angle_lsb = msg->data[3];  // STEERING_LTA_2.STEER_ANGLE_CMD (LSB)
 
-      if (!toyota_lta) {
-        // Torque-only SecOC cars block any form of LTA actuation.
-        bool actuation = lta_request || lta_request2 || (lta_angle != 0);
-        if (actuation) {
-          tx = false;
-        }
-      } else {
-        bool steer_control_enabled = lta_request || lta_request2;
-        if (steer_angle_cmd_checks_vm(lta_angle, steer_control_enabled, TOYOTA_SECOC_LTA_ANGLE_STEERING_LIMITS,
-                                      TOYOTA_SECOC_LTA_STEERING_PARAMS)) {
-          tx = false;
-        }
-        if (lta_request != lta_request2) {
-          tx = false;
-        }
+      bool actuation = lta_request || lta_request2 || (lta_angle_msb != 0) || (lta_angle_lsb != 0);
+      if (actuation) {
+        tx = false;
       }
     }
 
@@ -507,19 +468,11 @@ static safety_config toyota_init(uint16_t param) {
 
   if (toyota_secoc) {
     static RxCheck toyota_secoc_rx_checks[] = {
-      TOYOTA_SECOC_RX_CHECKS(false)
-      TOYOTA_PCM_CRUISE_2_ADDR_CHECK
-    };
-    static RxCheck toyota_secoc_lta_rx_checks[] = {
-      TOYOTA_SECOC_RX_CHECKS(true)
+      TOYOTA_SECOC_RX_CHECKS
       TOYOTA_PCM_CRUISE_2_ADDR_CHECK
     };
 
-    if (toyota_lta) {
-      SET_RX_CHECKS(toyota_secoc_lta_rx_checks, ret);
-    } else {
-      SET_RX_CHECKS(toyota_secoc_rx_checks, ret);
-    }
+    SET_RX_CHECKS(toyota_secoc_rx_checks, ret);
   } else if (toyota_lta) {
     // Check the quality flag for angle measurement when using LTA, since it's not set on TSS-P cars
     static RxCheck toyota_lta_rx_checks[] = {

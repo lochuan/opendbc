@@ -1,9 +1,6 @@
 import math
 import unittest
 
-import pytest
-from opendbc.car.tests.dbc_adapter import sienna_dbc_adapter  # noqa: F401
-
 from opendbc.car import DT_CTRL, CanData, structs
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.fingerprints import FW_VERSIONS
@@ -11,8 +8,6 @@ from opendbc.car.fw_versions import FW_QUERY_CONFIGS
 from opendbc.car.interfaces import CarInterfaceBase, get_interface_attr
 from opendbc.car.values import PLATFORMS
 from opendbc.testing import Fuzzy, fuzzy_test
-
-pytestmark = pytest.mark.usefixtures('sienna_dbc_adapter')
 
 ALL_ECUS = tuple(sorted({ecu for ecus in FW_VERSIONS.values() for ecu in ecus} |
                         {ecu for config in FW_QUERY_CONFIGS.values() for ecu in config.extra_ecus}))
@@ -127,7 +122,7 @@ class TestCarInterfaces(unittest.TestCase):
 
     # Make sure we can combine dicts
     ret = get_interface_attr('DBC', combine_brands=True)
-    assert len(ret) >= 40
+    assert ret == {car: dbc for brand_dbc in get_interface_attr('DBC').values() if brand_dbc is not None for car, dbc in brand_dbc.items()}
 
     # We don't support combining non-dicts
     ret = get_interface_attr('CAR', combine_brands=True)
