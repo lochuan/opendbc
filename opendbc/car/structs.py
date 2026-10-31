@@ -6,13 +6,8 @@ import os
 import capnp
 from opendbc.car.common.basedir import BASEDIR
 
-# reuse the schema module already loaded by cereal when available; loading
-# car.capnp twice with different import paths aborts the process (pycapnp)
-try:
-  from cereal import car as car
-except ImportError:
-  capnp.remove_import_hook()
-  car = capnp.load(os.path.join(BASEDIR, "car.capnp"), imports=[BASEDIR])
+capnp.remove_import_hook()
+car = capnp.load(os.path.join(BASEDIR, "car.capnp"), imports=[BASEDIR])
 
 CarState = car.CarState
 RadarData = car.RadarData
@@ -67,6 +62,18 @@ class CarParamsSP:
   pcmCruiseSpeed: bool = auto_field()
   intelligentCruiseButtonManagementAvailable: bool = auto_field()
   enableGasInterceptor: bool = auto_field()
+
+  neuralNetworkLateralControl: 'CarParamsSP.NeuralNetworkLateralControl' = field(default_factory=lambda: CarParamsSP.NeuralNetworkLateralControl())
+
+  @auto_dataclass
+  class NeuralNetworkLateralControl:
+    model: 'CarParamsSP.NeuralNetworkLateralControl.Model' = field(default_factory=lambda: CarParamsSP.NeuralNetworkLateralControl.Model())
+    fuzzyFingerprint: bool = auto_field()
+
+    @auto_dataclass
+    class Model:
+      path: str = auto_field()
+      name: str = auto_field()
 
 
 @auto_dataclass

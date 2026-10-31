@@ -1,9 +1,8 @@
 import math
 import numpy as np
 from opendbc.car import Bus, make_tester_present_msg, rate_limit, structs, ACCELERATION_DUE_TO_GRAVITY, DT_CTRL
-from opendbc.car.lateral import apply_meas_steer_torque_limits, apply_std_steer_angle_limits, apply_steer_angle_limits_vm, common_fault_avoidance
-from opendbc.car.vehicle_model import VehicleModel
-from opendbc.car.carlog import error_once
+from opendbc.car.lateral import apply_meas_steer_torque_limits, apply_std_steer_angle_limits, common_fault_avoidance
+from opendbc.car.carlog import carlog
 from opendbc.car.common.filter_simple import FirstOrderFilter, HighPassFilter
 from opendbc.car.common.pid import PIDController
 from opendbc.car.secoc import add_mac, build_sync_mac
@@ -34,12 +33,6 @@ MAX_PITCH_COMPENSATION = 1.5  # m/s^2
 MAX_STEER_RATE = 100  # deg/s
 MAX_STEER_RATE_FRAMES = 17  # tx control frames needed before torque can be cut
 
-# The patched Sienna LTA EPS mode allows 534 deg/s for 40 EPS cycles.
-SIENNA_PATCHED_LTA_MAX_STEER_RATE = 500  # deg/s
-SIENNA_PATCHED_LTA_MAX_STEER_RATE_FRAMES = 32  # 20% margin below the EPS counter
-SIENNA_PATCHED_LTA_RELEASE_TORQUE = 80  # below the steeringPressed threshold of 100
-SIENNA_PATCHED_LTA_RELEASE_FRAMES = int(1.0 / DT_CTRL)
-
 # EPS allows user torque above threshold for 50 frames before permanently faulting
 MAX_USER_TORQUE = 500
 
@@ -62,7 +55,6 @@ class CarController(CarControllerBase, GasInterceptorCarController):
     CarControllerBase.__init__(self, dbc_names, CP, CP_SP)
     GasInterceptorCarController.__init__(self, CP, CP_SP)
     self.params = CarControllerParams(self.CP)
-    self.VM = VehicleModel(self.CP) if self.CP.carFingerprint == CAR.TOYOTA_SIENNA_PATCHED_LTA else None
     self.last_torque = 0
     self.last_angle = 0
     self.alert_active = False
@@ -70,8 +62,6 @@ class CarController(CarControllerBase, GasInterceptorCarController):
     self.standstill_req = False
     self.permit_braking = True
     self.steer_rate_counter = 0
-    self.lta_driver_override = False
-    self.lta_release_counter = 0
     self.distance_button = 0
 
     # *** start long control state ***
@@ -115,40 +105,15 @@ class CarController(CarControllerBase, GasInterceptorCarController):
 
         expected_mac = build_sync_mac(self.secoc_key, int(CS.secoc_synchronization['TRIP_CNT']), int(CS.secoc_synchronization['RESET_CNT']))
         if int(CS.secoc_synchronization['AUTHENTICATOR']) != expected_mac:
-          # EPS bypass(假 MAC 收横向)+ 原车纵向的形态下每次同步跳变都失配,
-          # 是已知无害的持续告警 —— 进程内只报一次,不刷屏。
-          error_once("secoc_sync_mac", "SecOC synchronization MAC mismatch, wrong key?")
+          carlog.error("SecOC synchronization MAC mismatch, wrong key?")
 
     # *** steer torque ***
     new_torque = int(round(actuators.torque * self.params.STEER_MAX))
     apply_torque = apply_meas_steer_torque_limits(new_torque, self.last_torque, CS.out.steeringTorqueEps, self.params)
 
-    patched_lta = (self.CP.carFingerprint == CAR.TOYOTA_SIENNA_PATCHED_LTA and
-                   self.CP.steerControlType == SteerControlType.angle)
-    if patched_lta:
-      driver_torque = abs(CS.out.steeringTorque)
-      if CS.out.steeringPressed or driver_torque >= self.params.MAX_LTA_DRIVER_TORQUE_ALLOWANCE:
-        self.lta_driver_override = True
-      if self.lta_driver_override:
-        # Wind-down alone leaves the EPS angle controller active; latch the request off until the driver releases.
-        if not CS.out.steeringPressed and driver_torque < SIENNA_PATCHED_LTA_RELEASE_TORQUE:
-          self.lta_release_counter += 1
-        else:
-          self.lta_release_counter = 0
-        if self.lta_release_counter >= SIENNA_PATCHED_LTA_RELEASE_FRAMES:
-          self.lta_driver_override = False
-          self.lta_release_counter = 0
-      lat_active = lat_active and not self.lta_driver_override
-    max_steer_rate = SIENNA_PATCHED_LTA_MAX_STEER_RATE if patched_lta else MAX_STEER_RATE
-    max_steer_rate_frames = SIENNA_PATCHED_LTA_MAX_STEER_RATE_FRAMES if patched_lta else MAX_STEER_RATE_FRAMES
-
-    # Cut two frames for patched LTA so one inactive message is always sent at 50 Hz.
-    self.steer_rate_counter, rate_allowed_steer_req = common_fault_avoidance(
-      abs(CS.out.steeringRateDeg) >= max_steer_rate, lat_active, self.steer_rate_counter, max_steer_rate_frames,
-      max_mismatching_frames=2 if patched_lta else 1)
-    apply_steer_req = rate_allowed_steer_req
-    lta_active = (rate_allowed_steer_req if patched_lta else
-                  lat_active and self.CP.steerControlType == SteerControlType.angle)
+    # >100 degree/sec steering fault prevention
+    self.steer_rate_counter, apply_steer_req = common_fault_avoidance(abs(CS.out.steeringRateDeg) >= MAX_STEER_RATE, lat_active,
+                                                                      self.steer_rate_counter, MAX_STEER_RATE_FRAMES)
 
     if not lat_active:
       apply_torque = 0
@@ -162,15 +127,10 @@ class CarController(CarControllerBase, GasInterceptorCarController):
         # EPS uses the torque sensor angle to control with, offset to compensate
         apply_angle = actuators.steeringAngleDeg + CS.out.steeringAngleOffsetDeg
 
-        # Inactive LTA commands must follow the measured angle, including fault-avoidance cuts.
-        angle_active = lta_active if patched_lta else CC.latActive
-        measured_angle = CS.out.steeringAngleDeg + CS.out.steeringAngleOffsetDeg
-        if patched_lta:
-          self.last_angle = apply_steer_angle_limits_vm(apply_angle, self.last_angle, CS.out.vEgoRaw,
-                                                        measured_angle, angle_active, self.params, self.VM)
-        else:
-          self.last_angle = apply_std_steer_angle_limits(apply_angle, self.last_angle, CS.out.vEgoRaw,
-                                                         measured_angle, angle_active, self.params.ANGLE_LIMITS)
+        # Angular rate limit based on speed
+        self.last_angle = apply_std_steer_angle_limits(apply_angle, self.last_angle, CS.out.vEgoRaw,
+                                                       CS.out.steeringAngleDeg + CS.out.steeringAngleOffsetDeg,
+                                                       CC.latActive, self.params.ANGLE_LIMITS)
 
     self.last_torque = apply_torque
 
@@ -190,20 +150,19 @@ class CarController(CarControllerBase, GasInterceptorCarController):
 
     # STEERING_LTA does not seem to allow more rate by sending faster, and may wind up easier
     if self.frame % 2 == 0 and self.CP.flags & ToyotaFlags.TSS2:
+      lta_active = lat_active and self.CP.steerControlType == SteerControlType.angle
       # cut steering torque with TORQUE_WIND_DOWN when either EPS torque or driver torque is above
       # the threshold, to limit max lateral acceleration and for driver torque blending respectively.
-      full_torque_condition = (abs(CS.out.steeringTorqueEps) < self.params.LTA_MAX_MEAS_TORQUE and
+      full_torque_condition = (abs(CS.out.steeringTorqueEps) < self.params.STEER_MAX and
                                abs(CS.out.steeringTorque) < self.params.MAX_LTA_DRIVER_TORQUE_ALLOWANCE)
 
       # TORQUE_WIND_DOWN at 0 ramps down torque at roughly the max down rate of 1500 units/sec
       torque_wind_down = 100 if lta_active and full_torque_condition else 0
-      lta_steer_angle = 0 if patched_lta else self.last_angle
-      can_sends.append(toyotacan.create_lta_steer_command(self.packer, self.CP.steerControlType, lta_steer_angle,
+      can_sends.append(toyotacan.create_lta_steer_command(self.packer, self.CP.steerControlType, self.last_angle,
                                                           lta_active, self.frame // 2, torque_wind_down))
 
       if self.CP.flags & ToyotaFlags.SECOC.value:
-        lta_steer_2 = toyotacan.create_lta_steer_command_2(self.packer, self.last_angle if patched_lta else 0,
-                                                          lta_active, self.frame // 2, high_output=patched_lta)
+        lta_steer_2 = toyotacan.create_lta_steer_command_2(self.packer, self.frame // 2)
         lta_steer_2 = add_mac(self.secoc_key,
                               int(CS.secoc_synchronization['TRIP_CNT']),
                               int(CS.secoc_synchronization['RESET_CNT']),
