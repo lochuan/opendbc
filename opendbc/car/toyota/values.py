@@ -74,6 +74,7 @@ class ToyotaFlags(IntFlag):
   # these cars can utilize 2.0 m/s^2
   RAISED_ACCEL_LIMIT = 1024
   SECOC = 2048
+  EPS_BYPASS_SECOC = 4096
 
   # deprecated flags
   # these cars are speculated to allow stop and go when the DSU is unplugged or disabled with sDSU
@@ -100,6 +101,17 @@ class ToyotaCarDocs(CarDocs):
 class ToyotaSecOcCarDocs(ToyotaCarDocs):
   support_type: SupportType = SupportType.CUSTOM
   support_link: str = "#secoc-cars-with-recoverable-keys"
+
+
+@dataclass
+class ToyotaSiennaPatchedCarDocs(ToyotaSecOcCarDocs):
+  support_link: str = "#secoc-cars-with-eps-patched"
+
+  def __post_init__(self):
+    super().__post_init__()
+    self.model = "Sienna"
+    self.years = "2021-27"
+    self.year_list = [str(year) for year in range(2021, 2028)]
 
 
 @dataclass
@@ -309,6 +321,11 @@ class CAR(Platforms):
   TOYOTA_SIENNA_4TH_GEN = ToyotaSecOCPlatformConfig(
     [ToyotaSecOcCarDocs("Toyota Sienna 2021-23", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=4625. * CV.LB_TO_KG, wheelbase=3.06, steerRatio=17.8, tireStiffnessFactor=0.444),
+  )
+  TOYOTA_SIENNA_PATCHED = ToyotaSecOCPlatformConfig(
+    [ToyotaSiennaPatchedCarDocs("Toyota Sienna 2021-27 PATCHED", min_enable_speed=MIN_ACC_SPEED)],
+    CarSpecs(mass=4625. * CV.LB_TO_KG, wheelbase=3.06, steerRatio=17.8, tireStiffnessFactor=0.444),
+    flags=ToyotaFlags.EPS_BYPASS_SECOC,
   )
 
   # Lexus

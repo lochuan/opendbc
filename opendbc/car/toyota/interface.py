@@ -106,6 +106,12 @@ class CarInterface(CarInterfaceBase):
     ret.openpilotLongitudinalControl = ((bool(ret.flags & ToyotaFlags.TSS2) and not (ret.flags & ToyotaFlags.RADAR_ACC)) or
                                         bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value))
 
+    # Patched EPS bypasses lateral SecOC only; longitudinal stays stock.
+    if ret.flags & ToyotaFlags.EPS_BYPASS_SECOC.value:
+      ret.openpilotLongitudinalControl = False
+      ret.alphaLongitudinalAvailable = False
+      ret.flags &= ~ToyotaFlags.DISABLE_RADAR.value
+
     ret.autoResumeSng = ret.openpilotLongitudinalControl and candidate in NO_STOP_TIMER_CAR
 
     if not ret.openpilotLongitudinalControl:

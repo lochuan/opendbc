@@ -1,3 +1,7 @@
+Unreleased
+==========
+* Restore Toyota Sienna 2021-27 PATCHED lateral support with stock longitudinal control.
+
 Version 0.3.1 (2026-04-22)
 ========================
 * Ship DBCs, capnp schemas, and torque data in the wheel

@@ -1,11 +1,12 @@
 import unittest
 
-from opendbc.car import Bus
+from opendbc.car import Bus, gen_empty_fingerprint
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
 from opendbc.car.toyota.fingerprints import FW_VERSIONS
 from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, \
                                                   FUZZY_EXCLUDED_PLATFORMS, get_platform_codes
+from opendbc.car.toyota.interface import CarInterface
 from opendbc.testing import fuzzy_test
 
 Ecu = CarParams.Ecu
@@ -28,6 +29,16 @@ class TestToyotaInterfaces(unittest.TestCase):
   def test_lta_platforms(self):
     # At this time, only RAV4 2023 is expected to use LTA/angle control
     assert cars_with(ToyotaFlags.ANGLE_CONTROL) == {CAR.TOYOTA_RAV4_TSS2_2023}
+
+  def test_patched_sienna_remains_lateral_only(self):
+    assert cars_with(ToyotaFlags.EPS_BYPASS_SECOC) == {CAR.TOYOTA_SIENNA_PATCHED}
+    for alpha_long in (False, True):
+      CP = CarInterface.get_params(CAR.TOYOTA_SIENNA_PATCHED, gen_empty_fingerprint(), [],
+                                   alpha_long=alpha_long, is_release=False, docs=False)
+      assert not CP.openpilotLongitudinalControl
+      assert not CP.alphaLongitudinalAvailable
+      assert not CP.flags & ToyotaFlags.DISABLE_RADAR
+      assert CP.steerControlType == CarParams.SteerControlType.torque
 
   def test_tss2_dbc(self):
     # We make some assumptions about TSS2 platforms,

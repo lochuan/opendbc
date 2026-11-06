@@ -7,6 +7,7 @@ from opendbc.car.values import Platform
 # FIXME: add routes for these cars
 non_tested_cars = [
   MOCK.MOCK,
+  TOYOTA.TOYOTA_SIENNA_PATCHED,
 ]
 
 
