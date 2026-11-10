@@ -48,9 +48,13 @@ def setup_interfaces(CI, CP: structs.CarParams, CP_SP: structs.CarParamsSP,
 
 def _initialize_toyota(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params_dict: dict[str, str]) -> None:
   if CP.brand == 'toyota':
+    toyota_aftermarket_bsm = int(params_dict.get("ToyotaAftermarketBsm", 0)) == 1
     toyota_stock_long = int(params_dict.get("ToyotaEnforceStockLongitudinal", 0)) == 1
     toyota_stop_and_go_hack = int(params_dict.get("ToyotaStopAndGoHack", 0)) == 1
     toyota_tss2_smooth = int(params_dict.get("ToyotaTSS2Smooth", 0)) == 1
+
+    if toyota_aftermarket_bsm:
+      CP.enableBsm = False
 
     if toyota_stock_long:
       CP_SP.flags |= ToyotaFlagsSP.STOCK_LONGITUDINAL.value

@@ -1,13 +1,17 @@
 import unittest
+from unittest.mock import patch
 
+from opendbc.can import CANPacker
 from opendbc.car import Bus, gen_empty_fingerprint
-from opendbc.car.structs import CarParams
+from opendbc.car.structs import CarParams, CarParamsSP
+from opendbc.car.car_helpers import get_car
 from opendbc.car.fw_versions import build_fw_dict
 from opendbc.car.toyota.fingerprints import FW_VERSIONS
 from opendbc.car.toyota.values import CAR, DBC, ToyotaFlags, FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, \
                                                   FUZZY_EXCLUDED_PLATFORMS, get_platform_codes
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.testing import fuzzy_test
+from opendbc.sunnypilot.car.interfaces import setup_interfaces
 
 Ecu = CarParams.Ecu
 
@@ -65,6 +69,53 @@ class TestToyotaInterfaces(unittest.TestCase):
 
         if car_model not in (CAR.TOYOTA_PRIUS_V, CAR.LEXUS_CTH):
           assert Ecu.eps in present_ecus
+
+
+class TestToyotaAftermarketBsm(unittest.TestCase):
+  @staticmethod
+  def get_interface(factory_bsm, aftermarket_bsm, cached_params=None):
+    fingerprint = gen_empty_fingerprint()
+    if factory_bsm:
+      fingerprint[0][0x3F6] = 8
+    params_list = [] if aftermarket_bsm is None else [{"ToyotaAftermarketBsm": aftermarket_bsm}]
+    discovery = (CAR.TOYOTA_RAV4_TSS2, fingerprint, "00000000000000000", [], CarParams.FingerprintSource.can, True)
+    with patch("opendbc.car.car_helpers.fingerprint", return_value=discovery):
+      return get_car(None, None, None, alpha_long_allowed=False, is_release=False,
+                     cached_params=cached_params, init_params_list_sp=params_list)
+
+  def test_bsm_detection_and_override(self):
+    for factory_bsm in (False, True):
+      for aftermarket_bsm in (None, False, True):
+        with self.subTest(factory_bsm=factory_bsm, aftermarket_bsm=aftermarket_bsm):
+          CI = self.get_interface(factory_bsm, aftermarket_bsm)
+          enabled = factory_bsm and not aftermarket_bsm
+          assert CI.CP.enableBsm == enabled
+
+          # The parser subscribes lazily when CarState first reads a message.
+          CI.update([])
+          parser = CI.can_parsers[Bus.pt]
+          assert (0x3F6 in parser.addresses) == enabled
+          packer = CANPacker(DBC[CI.CP.carFingerprint][Bus.pt])
+          msg = packer.make_can_msg("BSM", 0, {"L_ADJACENT": 1, "R_APPROACHING": 1})
+          state, _ = CI.update([(10_000_000, [msg])])
+          assert state.leftBlindspot == enabled
+          assert state.rightBlindspot == enabled
+          assert (0x3F6 in parser.addresses) == enabled
+
+  def test_factory_bsm_restored_on_next_initialization(self):
+    disabled = self.get_interface(True, True)
+    assert not disabled.CP.enableBsm
+    restored = self.get_interface(True, False, cached_params=disabled.CP.as_reader())
+    assert restored.CP.enableBsm
+    restored.update([])
+    assert 0x3F6 in restored.can_parsers[Bus.pt].addresses
+
+  def test_other_brands_unchanged(self):
+    for enabled in (False, True):
+      with self.subTest(enabled=enabled):
+        CP = CarParams(brand="honda", enableBsm=enabled)
+        setup_interfaces(None, CP, CarParamsSP(), [{"ToyotaAftermarketBsm": True}])
+        assert CP.enableBsm == enabled
 
 
 class TestToyotaFingerprint(unittest.TestCase):
