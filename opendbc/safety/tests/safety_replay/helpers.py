@@ -1,4 +1,3 @@
-from opendbc.car.hyundai.values import HyundaiSafetyFlags
 from opendbc.car.toyota.values import ToyotaSafetyFlags
 from opendbc.car.structs import CarParams
 from opendbc.safety.tests.libsafety import libsafety_py
@@ -22,9 +21,7 @@ def is_steering_msg(mode, param, addr):
   elif mode in (CarParams.SafetyModel.hyundai, CarParams.SafetyModel.hyundaiLegacy):
     ret = addr == 832
   elif mode == CarParams.SafetyModel.hyundaiCanfd:
-    ret = addr == (0x110 if param & HyundaiSafetyFlags.CANFD_LKA_STEER_MSG_ALT else
-                   0x50 if param & HyundaiSafetyFlags.CANFD_LKA_STEER_MSG else
-                   0x12A)
+    raise ValueError("Hyundai CAN-FD replay is unavailable in this Toyota-only build")
   elif mode == CarParams.SafetyModel.chrysler:
     ret = addr == 0x292
   elif mode == CarParams.SafetyModel.subaru:
@@ -56,8 +53,6 @@ def get_steer_value(mode, param, msg):
     torque = to_signed(torque, 11)
   elif mode in (CarParams.SafetyModel.hyundai, CarParams.SafetyModel.hyundaiLegacy):
     torque = (((msg.data[3] & 0x7) << 8) | msg.data[2]) - 1024
-  elif mode == CarParams.SafetyModel.hyundaiCanfd:
-    torque = ((msg.data[5] >> 1) | (msg.data[6] & 0xF) << 7) - 1024
   elif mode == CarParams.SafetyModel.chrysler:
     torque = (((msg.data[0] & 0x7) << 8) | msg.data[1]) - 1024
   elif mode == CarParams.SafetyModel.subaru:
